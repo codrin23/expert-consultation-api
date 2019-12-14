@@ -1,6 +1,8 @@
 package com.code4ro.legalconsultation.model.persistence;
 
+import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import javax.persistence.*;
@@ -9,19 +11,13 @@ import javax.persistence.*;
 @Table(name = "document_configuration")
 @Getter
 @Setter
+@NoArgsConstructor
+@AllArgsConstructor
 public class DocumentConfiguration extends BaseEntity {
 
     @Column(name = "is_open_for_commenting")
-    private Boolean isOpenForCommenting;
+    private Boolean openForCommenting;
 
     @Column(name = "is_open_for_voting_comments")
-    private Boolean isOpenForVotingComments;
-
-    public DocumentConfiguration() {
-    }
-
-    public DocumentConfiguration(Boolean isOpenForCommenting, Boolean isOpenForVotingComments) {
-        this.isOpenForCommenting = isOpenForCommenting;
-        this.isOpenForVotingComments = isOpenForVotingComments;
-    }
+    private Boolean openForVotingComments;
 }
