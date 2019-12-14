@@ -81,6 +81,8 @@ public class DocumentController {
             @ApiParam(value = "Date when the document was received") @DateTimeFormat(pattern = "dd/MM/yyyy") Date receiveDate,
             @ApiParam(value = "The file containing the document content") @RequestParam("file") MultipartFile documentFile) {
 
+        // TODO: decide the configuration for each document will be provided,
+        //       currently the service will initialise it with default true values
         DocumentViewDto documentViewDto = new DocumentViewDto(documentTitle, documentNumber, initiator, type, creationDate, receiveDate);
         DocumentConsolidated consolidated = documentService.create(documentViewDto, documentFile);
         return ResponseEntity
