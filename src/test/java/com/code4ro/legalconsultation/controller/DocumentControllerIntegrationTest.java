@@ -1,5 +1,6 @@
 package com.code4ro.legalconsultation.controller;
 
+import com.amazonaws.util.json.Jackson;
 import com.code4ro.legalconsultation.common.controller.AbstractControllerIntegrationTest;
 import com.code4ro.legalconsultation.model.dto.DocumentViewDto;
 import com.code4ro.legalconsultation.model.persistence.DocumentConfiguration;
@@ -19,7 +20,6 @@ import org.junit.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.FileSystemUtils;
@@ -33,9 +33,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.endsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 public class DocumentControllerIntegrationTest extends AbstractControllerIntegrationTest {
 
@@ -51,27 +52,21 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     @Autowired
     private DocumentNodeFactory documentNodeFactory;
     @Autowired
-    private CommentService commentService;
-    @Autowired
     private CommentFactory commentFactory;
 
     @Test
     @WithMockUser
     @Transactional
     public void saveDocument() throws Exception {
+        final File file = PdfFileFactory.getAsFiles(getClass().getClassLoader()).get(0);
         final DocumentViewDto randomView = RandomObjectFiller.createAndFill(DocumentViewDto.class);
+        randomView.setFilePath(file.getPath());
 
-        final MockMultipartFile randomFile = PdfFileFactory.getAsMultipart(getClass().getClassLoader());
-        mvc.perform(multipart("/api/document/")
-                .file(randomFile)
-                .param("title", randomView.getTitle())
-                .param("number", randomView.getDocumentNumber().toString())
-                .param("documentInitializer", randomView.getDocumentInitializer())
-                .param("type", randomView.getDocumentType().toString())
-                .param("creationDate", "09/09/2018")
-                .param("receiveDate", "10/09/2018"))
+        mvc.perform(post("/api/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(Jackson.toJsonString(randomView))
+                .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isCreated());
-
         assertThat(documentMetadataRepository.count()).isEqualTo(1);
         assertThat(documentConsolidatedRepository.count()).isEqualTo(1);
         assertThat(documentNodeRepository.count()).isEqualTo(14);
@@ -84,72 +79,135 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
         assertThatDocumentNodeTreeIsGeneratedCorrectly(document.getDocumentNode());
     }
 
+    @Test
+    @WithMockUser
+    @Transactional
+    public void saveDocumentDuplicatedNumber() throws Exception {
+        final File file = PdfFileFactory.getAsFiles(getClass().getClassLoader()).get(0);
+        final DocumentViewDto firstDocument = RandomObjectFiller.createAndFill(DocumentViewDto.class);
+        firstDocument.setFilePath(file.getPath());
+
+        mvc.perform(post("/api/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(Jackson.toJsonString(firstDocument))
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isCreated());
+
+        final DocumentViewDto secondDocument = RandomObjectFiller.createAndFill(DocumentViewDto.class);
+        secondDocument.setDocumentNumber(firstDocument.getDocumentNumber());
+
+        mvc.perform(post("/api/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(Jackson.toJsonString(secondDocument))
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest());
+
+    }
+
+    @Test
+    @WithMockUser
+    @Transactional
+    public void saveDocumentDuplicatedFilePath() throws Exception {
+        final File file = PdfFileFactory.getAsFiles(getClass().getClassLoader()).get(0);
+        final DocumentViewDto firstDocument = RandomObjectFiller.createAndFill(DocumentViewDto.class);
+        firstDocument.setFilePath(file.getPath());
+
+        mvc.perform(post("/api/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(Jackson.toJsonString(firstDocument))
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isCreated());
+
+        final DocumentViewDto secondDocument = RandomObjectFiller.createAndFill(DocumentViewDto.class);
+        secondDocument.setFilePath(file.getPath());
+
+        mvc.perform(post("/api/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(Jackson.toJsonString(secondDocument))
+                .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest());
+
+    }
+
     private void assertThatDocumentNodeTreeIsGeneratedCorrectly(final DocumentNode document) {
         final DocumentNode expectedDocument = documentNodeFactory.createDocument(null, "Document title  on multiple lines", "Sample document introduction that can be on one line or on multiplelines");
         assertThat(document.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedDocument, document);
 
         final DocumentNode expectedChapter1 = documentNodeFactory.createChapter("I", "Chapter title on multiple lines  ", null);
+        expectedChapter1.setParent(document);
         final DocumentNode chapter1 = document.getChildren().get(0);
         assertThat(chapter1.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedChapter1, chapter1);
 
         final DocumentNode expectedChapter2 = documentNodeFactory.createChapter("II", "Chapter title on single line", null);
+        expectedChapter2.setParent(document);
         final DocumentNode chapter2 = document.getChildren().get(1);
         assertThat(chapter1.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedChapter2, chapter2);
 
         final DocumentNode expectedArticle4 = documentNodeFactory.createArticle("4", null, "Article without children");
+        expectedArticle4.setParent(chapter2);
         final DocumentNode article4 = chapter2.getChildren().get(0);
         assertThat(article4.getChildren()).isEmpty();
         assertDocumentNodeContent(expectedArticle4, article4);
 
         final DocumentNode expectedSection1 = documentNodeFactory.createSection("1", "Section with title", null);
+        expectedSection1.setParent(chapter1);
         final DocumentNode section1 = chapter1.getChildren().get(0);
         assertThat(section1.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedSection1, section1);
 
         final DocumentNode expectedSection2 = documentNodeFactory.createSection("2", null, null);
+        expectedSection2.setParent(chapter1);
         final DocumentNode section2 = chapter1.getChildren().get(1);
         assertThat(section1.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedSection2, section2);
 
         final DocumentNode expectedArticle1 = documentNodeFactory.createArticle("1", null, null);
+        expectedArticle1.setParent(section1);
         final DocumentNode article1 = section1.getChildren().get(0);
         assertThat(article1.getChildren()).hasSize(1);
         assertDocumentNodeContent(expectedArticle1, article1);
 
         final DocumentNode expectedArticle2 = documentNodeFactory.createArticle("2", "Article with title on one line", null);
+        expectedArticle2.setParent(section1);
         final DocumentNode article2 = section1.getChildren().get(1);
         assertThat(article2.getChildren()).hasSize(1);
         assertDocumentNodeContent(expectedArticle2, article2);
 
         final DocumentNode expectedArticle3 = documentNodeFactory.createArticle("3", "Article with title on multiple lines", null);
+        expectedArticle3.setParent(section2);
         final DocumentNode article3 = section2.getChildren().get(0);
         assertThat(article2.getChildren()).hasSize(1);
         assertDocumentNodeContent(expectedArticle3, article3);
 
         final DocumentNode expectedParagraph11 = documentNodeFactory.createParagraph("1", null, "Paragraph content on a single line");
+        expectedParagraph11.setParent(article1);
         final DocumentNode paragraph11 = article1.getChildren().get(0);
         assertThat(paragraph11.getChildren()).isEmpty();
         assertDocumentNodeContent(expectedParagraph11, paragraph11);
 
         final DocumentNode expectedParagraph21 = documentNodeFactory.createParagraph("1", null, "Paragraph content on multiple lines");
+        expectedParagraph21.setParent(article2);
         final DocumentNode paragraph21 = article2.getChildren().get(0);
         assertThat(paragraph21.getChildren()).isEmpty();
         assertDocumentNodeContent(expectedParagraph21, paragraph21);
 
         final DocumentNode expectedParagraph35 = documentNodeFactory.createParagraph("5", null, "Paragraph with multiple letters");
+        expectedParagraph35.setParent(article3);
         final DocumentNode paragraph35 = article3.getChildren().get(0);
         assertThat(paragraph35.getChildren()).hasSize(2);
         assertDocumentNodeContent(expectedParagraph35, paragraph35);
 
         final DocumentNode expectedAlignmentA = documentNodeFactory.createAlignment("a", null, "Sample letter content 1");
+        expectedAlignmentA.setParent(paragraph35);
         final DocumentNode alignmentA = paragraph35.getChildren().get(0);
         assertThat(alignmentA.getChildren()).isEmpty();
         assertDocumentNodeContent(expectedAlignmentA, alignmentA);
 
         final DocumentNode expectedAlignmentB = documentNodeFactory.createAlignment("b", null, "Sample letter content 2");
+        expectedAlignmentB.setParent(paragraph35);
         final DocumentNode alignmentB = paragraph35.getChildren().get(1);
         assertThat(alignmentA.getChildren()).isEmpty();
         assertDocumentNodeContent(expectedAlignmentB, alignmentB);
@@ -160,10 +218,10 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
         assertThat(expected.getTitle()).isEqualToIgnoringWhitespace(actual.getTitle());
         assertThat(expected.getContent()).isEqualToIgnoringWhitespace(actual.getContent());
         assertThat(expected.getDocumentNodeType()).isEqualByComparingTo(actual.getDocumentNodeType());
+        assertThat(expected.getParent()).isEqualTo(actual.getParent());
     }
 
     private void assertThatDocumentIsStored(String soredFilePath) {
-        assertThat(soredFilePath).contains(customStoreDirPath);
         assertThat(Files.exists(Paths.get(soredFilePath))).isTrue();
         // remove the store directory
         final File storeDir = new File(customStoreDirPath);
@@ -177,12 +235,12 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void getDocument() throws Exception {
         DocumentConsolidated consolidated = saveSingleConsolidated();
 
-        mvc.perform(get(endpoint("/api/document/", consolidated.getId()))
+        mvc.perform(get(endpoint("/api/documents/", consolidated.getId()))
                 .accept(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.id").value(consolidated.getDocumentMetadata().getId().toString()))
                 .andExpect(status().isOk());
 
-        mvc.perform(get(endpoint("/api/document/", consolidated.getId(), "/consolidated"))
+        mvc.perform(get(endpoint("/api/documents/", consolidated.getId(), "/consolidated"))
                 .accept(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.id").value(consolidated.getId().toString()))
                 .andExpect(status().isOk())
@@ -201,7 +259,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
         commentFactory.save(consolidated.getDocumentNode().getId());
         commentFactory.save(consolidated.getDocumentNode().getId());
 
-        mvc.perform(get(endpoint("/api/document/", consolidated.getId(), "/consolidated"))
+        mvc.perform(get(endpoint("/api/documents/", consolidated.getId(), "/consolidated"))
                 .accept(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.documentNode.numberOfComments").value("2"))
                 .andExpect(status().isOk())
@@ -217,7 +275,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
         documentsConsolidated.add(saveSingleConsolidated());
         documentsConsolidated.add(saveSingleConsolidated());
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.content.size()").value(2))
                 .andExpect(jsonPath("$.content[0].id").value(documentsConsolidated.get(0).getDocumentMetadata().getId().toString()))
@@ -240,7 +298,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
         documentsConsolidated.add(saveSingleConsolidated());
         documentsConsolidated.add(saveSingleConsolidated());
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("page", "0")
                 .param("size", "2"))
@@ -251,7 +309,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
                 .andExpect(jsonPath("$.totalElements").value(3))
                 .andExpect(status().isOk());
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("page", "1")
                 .param("size", "2"))
@@ -276,7 +334,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
 
         documentsConsolidated.sort(Comparator.comparing(d -> d.getDocumentMetadata().getDateOfDevelopment()));
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("sort", "dateOfDevelopment"))
                 .andExpect(jsonPath("$.content.size()").value(2))
@@ -288,7 +346,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
 
         documentsConsolidated.sort(Comparator.comparing(d -> d.getDocumentMetadata().getDocumentInitializer()));
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("sort", "documentInitializer"))
                 .andExpect(jsonPath("$.content.size()").value(2))
@@ -308,7 +366,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void testGetDocumentsPaginationForNonExistingPage() throws Exception {
         saveSingleConsolidated();
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("page", "10"))
                 .andExpect(jsonPath("$.content.size()").value(0))
@@ -321,7 +379,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     @WithMockUser
     @Transactional
     public void testGetDocumentsSortingByNonExistentField() throws Exception {
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("sort", "nonExistentField"))
                 .andExpect(status().isInternalServerError());
@@ -333,13 +391,13 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void testGetDocumentsPaginationAndSorting() throws Exception {
         List<DocumentConsolidated> documentsConsolidated = new ArrayList<>();
 
-        for(int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10; i++) {
             documentsConsolidated.add(saveSingleConsolidated());
         }
 
         documentsConsolidated.sort(Comparator.comparing(d -> d.getDocumentMetadata().getDocumentInitializer()));
 
-        mvc.perform(get("/api/document/")
+        mvc.perform(get("/api/documents/")
                 .accept(MediaType.APPLICATION_JSON)
                 .param("sort", "documentInitializer")
                 .param("page", "2")
@@ -359,7 +417,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void deleteDocument() throws Exception {
         DocumentConsolidated consolidated = saveSingleConsolidated();
 
-        mvc.perform(delete("/api/document/" + consolidated.getId().toString())
+        mvc.perform(delete("/api/documents/" + consolidated.getId().toString())
                 .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk());
 
@@ -372,7 +430,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void testGetDocumentNotFound() throws Exception {
         UUID uuid = UUID.randomUUID();
 
-        mvc.perform(get("/api/document/" + uuid.toString()))
+        mvc.perform(get("/api/documents/" + uuid.toString()))
                 .andExpect(status().isNotFound());
     }
 
@@ -381,7 +439,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void testGetDocumentConsolidatedNotFound() throws Exception {
         UUID uuid = UUID.randomUUID();
 
-        mvc.perform(get("/api/document/" + uuid.toString() + "/consolidated"))
+        mvc.perform(get("/api/documents/" + uuid.toString() + "/consolidated"))
                 .andExpect(status().isNotFound());
     }
 
@@ -390,7 +448,7 @@ public class DocumentControllerIntegrationTest extends AbstractControllerIntegra
     public void deleteDocumentNotFound() throws Exception {
         UUID uuid = UUID.randomUUID();
 
-        mvc.perform(delete("/api/document/" + uuid.toString()))
+        mvc.perform(delete("/api/documents/" + uuid.toString()))
                 .andExpect(status().isNotFound());
     }
 
